@@ -195,6 +195,62 @@ install_zlib() {
     fi
 }
 
+# 下载并安装 OpenSSL (用于HTTPS支持)
+install_openssl() {
+    log "开始安装 OpenSSL..."
+    cd "$BUILD_DIR"
+    
+    # 下载 OpenSSL
+    OPENSSL_VERSION="1.1.1q"
+    log "正在下载 OpenSSL v${OPENSSL_VERSION}..."
+    wget -q --show-progress "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
+    
+    if [ $? -ne 0 ]; then
+        error "OpenSSL 下载失败"
+        return 1
+    fi
+    
+    # 解压
+    log "正在解压 OpenSSL..."
+    tar -zxf "openssl-${OPENSSL_VERSION}.tar.gz"
+    cd "openssl-${OPENSSL_VERSION}"
+    
+    # 配置、编译和安装
+    log "正在配置 OpenSSL..."
+    ./config --prefix="$INSTALL_DIR/openssl" --openssldir="$INSTALL_DIR/openssl" no-shared >> "$LOG_FILE" 2>&1
+    
+    if [ $? -ne 0 ]; then
+        error "OpenSSL 配置失败，详情请查看日志文件"
+        return 1
+    fi
+    
+    log "正在编译 OpenSSL..."
+    make >> "$LOG_FILE" 2>&1
+    
+    if [ $? -ne 0 ]; then
+        error "OpenSSL 编译失败，详情请查看日志文件"
+        return 1
+    fi
+    
+    log "正在安装 OpenSSL..."
+    make install_sw >> "$LOG_FILE" 2>&1
+    
+    if [ $? -ne 0 ]; then
+        error "OpenSSL 安装失败，详情请查看日志文件"
+        return 1
+    fi
+    
+    # 验证安装
+    if [ -f "$INSTALL_DIR/openssl/bin/openssl" ]; then
+        OPENSSL_INSTALLED_VERSION=$("$INSTALL_DIR/openssl/bin/openssl" version)
+        success "OpenSSL ${OPENSSL_INSTALLED_VERSION} 安装成功！"
+        return 0
+    else
+        error "OpenSSL 安装验证失败"
+        return 1
+    fi
+}
+
 # 下载并安装 Nginx
 install_nginx() {
     log "开始安装 Nginx v${NGINX_VERSION}..."
@@ -214,12 +270,14 @@ install_nginx() {
     tar -zxf "nginx-${NGINX_VERSION}.tar.gz"
     cd "nginx-${NGINX_VERSION}"
     
-    # 配置、编译和安装 - 移除SSL模块，只保留基本功能
+    # 配置、编译和安装 - 添加SSL支持
     log "正在配置 Nginx..."
     ./configure \
         --prefix="$NGINX_INSTALL_DIR" \
         --with-zlib="$BUILD_DIR/zlib-${ZLIB_VERSION}" \
         --without-pcre \
+        --with-openssl="$BUILD_DIR/openssl-${OPENSSL_VERSION}" \
+        --with-http_ssl_module \
         --without-http_rewrite_module 2>&1 | tee -a "$LOG_FILE"
     
     if [ $? -ne 0 ]; then
@@ -514,6 +572,13 @@ install() {
         exit 1
     fi
     
+    # 安装OpenSSL
+    install_openssl
+    if [ $? -ne 0 ]; then
+        error "OpenSSL 安装失败，HTTPS功能将不可用"
+        exit 1
+    fi
+    
     install_nginx
     if [ $? -ne 0 ]; then
         error "Nginx 安装失败，安装过程终止"
@@ -554,8 +619,17 @@ install() {
     echo -e ""
     echo -e "安装日志已保存到: ${BLUE}$LOG_FILE${NC}"
     
-    # 提示功能限制
-    echo -e "${YELLOW}注意：当前安装不包含SSL和正则表达式功能，但基本反向代理功能可以正常使用。${NC}"
+    # 提示功能特性
+    echo -e "${GREEN}已启用功能：${NC}"
+    echo -e "  - 基本HTTP服务"
+    echo -e "  - HTTPS支持（SSL）"
+    echo -e "  - 反向代理"
+    if [ -f "$INSTALL_DIR/pcre/bin/pcre-config" ]; then
+        echo -e "  - 正则表达式支持"
+    else
+        echo -e "${YELLOW}未启用功能：${NC}"
+        echo -e "  - 正则表达式支持"
+    fi
 }
 
 # 开始安装
